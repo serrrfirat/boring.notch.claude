@@ -166,6 +166,11 @@ struct ClaudeCodeState: Equatable {
     var isConnected: Bool = false
     var lastUpdateTime: Date?
 
+    /// True when Claude is waiting for user permission to execute a tool
+    var needsPermission: Bool = false
+    /// The tool waiting for permission (if any)
+    var pendingPermissionTool: String?
+
     // Convenience accessors
     var contextPercentage: Double { tokenUsage.contextPercentage }
     var hasActiveTools: Bool { !activeTools.isEmpty }

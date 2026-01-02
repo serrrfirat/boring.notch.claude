@@ -43,6 +43,15 @@ final class ClaudeCodeManager: ObservableObject {
 
     private var sessionScanTimer: Timer?
 
+    /// Timer to detect when a tool is waiting for permission (no result after delay)
+    private var permissionCheckTimer: Timer?
+    /// Tracks tool IDs that we're waiting on for permission check
+    private var pendingToolChecks: [String: Date] = [:]
+    /// Delay before assuming a tool needs permission (seconds)
+    private let permissionCheckDelay: TimeInterval = 2.5
+    /// Flag to disable permission tracking during history loading
+    private var isLoadingHistory: Bool = false
+
     // MARK: - Initialization
 
     private init() {
@@ -300,9 +309,16 @@ final class ClaudeCodeManager: ObservableObject {
         let recentLines = lines.suffix(50)
         print("[ClaudeCode] Parsing \(recentLines.count) recent lines from \(lines.count) total")
 
+        // Disable permission tracking during history loading - these are already completed tools
+        isLoadingHistory = true
         for line in recentLines where !line.isEmpty {
             parseJSONLLine(line)
         }
+        isLoadingHistory = false
+
+        // Clear any active tools from history - they're already done
+        state.activeTools.removeAll()
+        pendingToolChecks.removeAll()
 
         print("[ClaudeCode] After parsing - model: \(state.model), tokens: \(state.tokenUsage.totalTokens), connected: \(state.isConnected)")
         state.lastUpdateTime = Date()
@@ -320,6 +336,7 @@ final class ClaudeCodeManager: ObservableObject {
               let content = String(data: newData, encoding: .utf8) else { return }
 
         let lines = content.components(separatedBy: .newlines)
+        print("[ClaudeCode] 📥 Reading \(lines.filter { !$0.isEmpty }.count) new lines from session file")
         for line in lines where !line.isEmpty {
             parseJSONLLine(line)
         }
@@ -387,6 +404,8 @@ final class ClaudeCodeManager: ObservableObject {
                     case "tool_use":
                         if let toolId = item["id"] as? String,
                            let toolName = item["name"] as? String {
+                            print("[ClaudeCode] 🔧 Detected tool_use: \(toolName) (id: \(toolId))")
+
                             // Parse TodoWrite tool to extract todos
                             if toolName == "TodoWrite",
                                let input = item["input"] as? [String: Any],
@@ -403,6 +422,9 @@ final class ClaudeCodeManager: ObservableObject {
                             // Add to active tools
                             if !state.activeTools.contains(where: { $0.id == toolId }) {
                                 state.activeTools.append(tool)
+                                print("[ClaudeCode] ✅ Added tool to activeTools. Count: \(state.activeTools.count)")
+                                // Start tracking this tool for permission check
+                                startPermissionCheck(toolId: toolId, toolName: toolName)
                             }
                         }
 
@@ -419,6 +441,9 @@ final class ClaudeCodeManager: ObservableObject {
             for item in content {
                 if let type = item["type"] as? String, type == "tool_result",
                    let toolUseId = item["tool_use_id"] as? String {
+                    // Clear permission tracking for this tool
+                    clearPermissionCheck(toolId: toolUseId)
+
                     // Mark tool as complete
                     if let index = state.activeTools.firstIndex(where: { $0.id == toolUseId }) {
                         var tool = state.activeTools.remove(at: index)
@@ -473,6 +498,86 @@ final class ClaudeCodeManager: ObservableObject {
 
         // Replace the entire todo list (TodoWrite always sends the complete list)
         state.todos = newTodos
+    }
+
+    // MARK: - Permission Detection
+
+    /// Start tracking a tool to check if it needs permission
+    private func startPermissionCheck(toolId: String, toolName: String) {
+        // Don't track permission during history loading - those tools are already completed
+        guard !isLoadingHistory else {
+            print("[ClaudeCode] Skipping permission check for \(toolName) - loading history")
+            return
+        }
+
+        print("[ClaudeCode] 🕐 Starting permission check for tool: \(toolName) (id: \(toolId))")
+        pendingToolChecks[toolId] = Date()
+
+        // Start or restart the permission check timer
+        permissionCheckTimer?.invalidate()
+        permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: permissionCheckDelay, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkPendingPermissions()
+            }
+        }
+    }
+
+    /// Clear permission tracking for a tool (when it completes)
+    private func clearPermissionCheck(toolId: String) {
+        print("[ClaudeCode] Clearing permission check for tool id: \(toolId)")
+        pendingToolChecks.removeValue(forKey: toolId)
+
+        // If we were showing permission needed for this tool, clear it
+        if state.needsPermission {
+            // Check if any other tools still need permission
+            if pendingToolChecks.isEmpty {
+                print("[ClaudeCode] All tools completed, clearing permission indicator")
+                state.needsPermission = false
+                state.pendingPermissionTool = nil
+                permissionCheckTimer?.invalidate()
+                permissionCheckTimer = nil
+            } else {
+                // Re-check if any remaining tools need permission
+                checkPendingPermissions()
+            }
+        }
+
+        // Stop timer if no more pending tools
+        if pendingToolChecks.isEmpty {
+            permissionCheckTimer?.invalidate()
+            permissionCheckTimer = nil
+        }
+    }
+
+    /// Check if any pending tools have exceeded the delay (likely waiting for permission)
+    private func checkPendingPermissions() {
+        let now = Date()
+        print("[ClaudeCode] Checking \(pendingToolChecks.count) pending tools for permission, activeTools: \(state.activeTools.count)")
+
+        for (toolId, startTime) in pendingToolChecks {
+            let elapsed = now.timeIntervalSince(startTime)
+            print("[ClaudeCode] Tool \(toolId) elapsed: \(elapsed)s (threshold: \(permissionCheckDelay)s)")
+            if elapsed >= permissionCheckDelay {
+                // This tool has been pending too long - likely needs permission
+                if let tool = state.activeTools.first(where: { $0.id == toolId }) {
+                    if !state.needsPermission {
+                        print("[ClaudeCode] ⚠️ Tool '\(tool.toolName)' likely waiting for permission - showing indicator")
+                    }
+                    state.needsPermission = true
+                    state.pendingPermissionTool = tool.toolName
+                    return
+                } else {
+                    // Tool not in activeTools - it might have been from history parsing
+                    // Still show permission indicator with a generic name
+                    print("[ClaudeCode] ⚠️ Tool \(toolId) not found in activeTools (\(state.activeTools.map { $0.id })), but exceeded threshold - showing indicator")
+                    if !state.needsPermission {
+                        state.needsPermission = true
+                        state.pendingPermissionTool = "Tool"
+                    }
+                    return
+                }
+            }
+        }
     }
 
     // MARK: - Notifications

@@ -2821,6 +2821,9 @@
         }
       }
     },
+    "Approval needed" : {
+
+    },
     "Auto-scroll to next event" : {
       "localizations" : {
         "ar" : {
