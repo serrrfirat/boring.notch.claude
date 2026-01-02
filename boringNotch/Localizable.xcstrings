@@ -401,6 +401,9 @@
         }
       }
     },
+    "(%lld)" : {
+
+    },
     "%.0f seconds" : {
       "localizations" : {
         "ar" : {
@@ -1000,6 +1003,9 @@
           }
         }
       }
+    },
+    "%lldms" : {
+
     },
     "• Bug fixes" : {
       "localizations" : {
@@ -1700,6 +1706,12 @@
           }
         }
       }
+    },
+    "Active" : {
+
+    },
+    "Active Tools" : {
+
     },
     "Add" : {
       "localizations" : {
@@ -5901,6 +5913,12 @@
           }
         }
       }
+    },
+    "Connected" : {
+
+    },
+    "Context" : {
+
     },
     "Continue" : {
       "localizations" : {
@@ -11909,6 +11927,9 @@
         }
       }
     },
+    "Last Output" : {
+
+    },
     "Layout Preview" : {
       "localizations" : {
         "ar" : {
@@ -12008,6 +12029,9 @@
           }
         }
       }
+    },
+    "left" : {
+
     },
     "Lottie JSON URL" : {
       "localizations" : {
@@ -14509,6 +14533,12 @@
         }
       }
     },
+    "No active sessions" : {
+
+    },
+    "No Claude Code session selected" : {
+
+    },
     "No custom animation available" : {
       "localizations" : {
         "ar" : {
@@ -15009,6 +15039,12 @@
           }
         }
       }
+    },
+    "No sessions" : {
+
+    },
+    "Not connected" : {
+
     },
     "Not Now" : {
       "localizations" : {
@@ -16910,6 +16946,15 @@
         }
       }
     },
+    "Recent" : {
+
+    },
+    "Recent Tools" : {
+
+    },
+    "Refresh Sessions" : {
+
+    },
     "Release name" : {
       "localizations" : {
         "ar" : {
@@ -18111,6 +18156,9 @@
           }
         }
       }
+    },
+    "Select Session" : {
+
     },
     "Select the music source you want to use. You can change this later in the app settings." : {
       "localizations" : {
@@ -20812,6 +20860,9 @@
         }
       }
     },
+    "Start Claude Code in a terminal to begin monitoring" : {
+
+    },
     "Stopped" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -22415,6 +22466,9 @@
         }
       }
     },
+    "used" : {
+
+    },
     "Using System Accent" : {
       "localizations" : {
         "ar" : {
@@ -22814,6 +22868,9 @@
           }
         }
       }
+    },
+    "Waiting for activity..." : {
+
     },
     "Welcome" : {
       "localizations" : {
