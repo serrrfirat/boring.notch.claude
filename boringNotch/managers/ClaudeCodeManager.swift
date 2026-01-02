@@ -19,6 +19,7 @@ final class ClaudeCodeManager: ObservableObject {
     @Published private(set) var availableSessions: [ClaudeSession] = []
     @Published var selectedSession: ClaudeSession?
     @Published private(set) var state: ClaudeCodeState = ClaudeCodeState()
+    @Published private(set) var dailyStats: DailyStats = DailyStats()
 
     // MARK: - Private Properties
 
@@ -47,6 +48,7 @@ final class ClaudeCodeManager: ObservableObject {
     private init() {
         setupNotifications()
         startSessionScanning()
+        loadDailyStats()
     }
 
     // Note: cleanup is handled by stopWatching() called manually or when app terminates
@@ -149,6 +151,7 @@ final class ClaudeCodeManager: ObservableObject {
         sessionScanTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.scanForSessions()
+                self?.loadDailyStats()
             }
         }
     }
@@ -384,6 +387,13 @@ final class ClaudeCodeManager: ObservableObject {
                     case "tool_use":
                         if let toolId = item["id"] as? String,
                            let toolName = item["name"] as? String {
+                            // Parse TodoWrite tool to extract todos
+                            if toolName == "TodoWrite",
+                               let input = item["input"] as? [String: Any],
+                               let todos = input["todos"] as? [[String: Any]] {
+                                parseTodos(todos)
+                            }
+
                             let tool = ToolExecution(
                                 id: toolId,
                                 toolName: toolName,
@@ -437,6 +447,34 @@ final class ClaudeCodeManager: ObservableObject {
         return nil
     }
 
+    private func parseTodos(_ todosArray: [[String: Any]]) {
+        var newTodos: [ClaudeTodoItem] = []
+
+        for todoDict in todosArray {
+            guard let content = todoDict["content"] as? String,
+                  let statusStr = todoDict["status"] as? String else {
+                continue
+            }
+
+            let status: ClaudeTodoItem.TodoStatus
+            switch statusStr {
+            case "pending":
+                status = .pending
+            case "in_progress":
+                status = .inProgress
+            case "completed":
+                status = .completed
+            default:
+                status = .pending
+            }
+
+            newTodos.append(ClaudeTodoItem(content: content, status: status))
+        }
+
+        // Replace the entire todo list (TodoWrite always sends the complete list)
+        state.todos = newTodos
+    }
+
     // MARK: - Notifications
 
     private func setupNotifications() {
@@ -456,5 +494,64 @@ final class ClaudeCodeManager: ObservableObject {
         )
 
         UNUserNotificationCenter.current().add(request)
+    }
+
+    // MARK: - Daily Stats
+
+    /// Load daily stats from ~/.claude/stats-cache.json
+    func loadDailyStats() {
+        let statsFile = claudeDir.appendingPathComponent("stats-cache.json")
+
+        guard FileManager.default.fileExists(atPath: statsFile.path),
+              let data = FileManager.default.contents(atPath: statsFile.path) else {
+            print("[ClaudeCode] stats-cache.json not found")
+            return
+        }
+
+        do {
+            let cache = try JSONDecoder().decode(StatsCache.self, from: data)
+
+            // Get today's date in the format used by the cache (YYYY-MM-DD)
+            let formatter = DateFormatter()
+            formatter.dateFormat = "yyyy-MM-dd"
+            let today = formatter.string(from: Date())
+
+            var stats = DailyStats()
+
+            // Try to find today's activity first, otherwise get the most recent
+            let sortedActivity = cache.dailyActivity?.sorted { $0.date > $1.date }
+            if let todayActivity = sortedActivity?.first(where: { $0.date == today }) {
+                stats.date = today
+                stats.messageCount = todayActivity.messageCount ?? 0
+                stats.toolCallCount = todayActivity.toolCallCount ?? 0
+                stats.sessionCount = todayActivity.sessionCount ?? 0
+            } else if let latestActivity = sortedActivity?.first {
+                // Use most recent day's stats
+                stats.date = latestActivity.date
+                stats.messageCount = latestActivity.messageCount ?? 0
+                stats.toolCallCount = latestActivity.toolCallCount ?? 0
+                stats.sessionCount = latestActivity.sessionCount ?? 0
+            }
+
+            // Try to find today's token usage first, otherwise get the most recent
+            let sortedTokens = cache.dailyModelTokens?.sorted { $0.date > $1.date }
+            let targetDate = stats.date.isEmpty ? today : stats.date
+            if let dayTokens = sortedTokens?.first(where: { $0.date == targetDate }),
+               let tokensByModel = dayTokens.tokensByModel {
+                stats.tokensUsed = tokensByModel.values.reduce(0, +)
+            } else if let latestTokens = sortedTokens?.first,
+                      let tokensByModel = latestTokens.tokensByModel {
+                stats.tokensUsed = tokensByModel.values.reduce(0, +)
+                if stats.date.isEmpty {
+                    stats.date = latestTokens.date
+                }
+            }
+
+            dailyStats = stats
+            print("[ClaudeCode] Loaded daily stats for \(stats.date): \(stats.messageCount) msgs, \(stats.toolCallCount) tools, \(stats.tokensUsed) tokens")
+
+        } catch {
+            print("[ClaudeCode] Error parsing stats-cache.json: \(error)")
+        }
     }
 }

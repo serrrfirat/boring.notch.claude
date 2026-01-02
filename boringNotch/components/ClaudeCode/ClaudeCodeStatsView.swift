@@ -2,7 +2,7 @@
 //  ClaudeCodeStatsView.swift
 //  boringNotch
 //
-//  Expanded view showing full Claude Code stats panel
+//  Compact view showing Claude Code stats - designed to fit in 190px notch height
 //
 
 import SwiftUI
@@ -11,254 +11,243 @@ struct ClaudeCodeStatsView: View {
     @ObservedObject var manager = ClaudeCodeManager.shared
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            // Header with session picker - always visible
-            HStack {
+        VStack(alignment: .leading, spacing: 6) {
+            // Row 1: Session picker + connection status + model/branch
+            HStack(spacing: 6) {
                 SessionPicker(manager: manager)
-                Spacer()
-                if manager.state.isConnected {
-                    HStack(spacing: 4) {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: 6, height: 6)
-                        Text("Connected")
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
 
-            if manager.state.isConnected {
-                // Model and branch info
-                HStack(spacing: 8) {
+                if manager.state.isConnected {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: 5, height: 5)
+
                     if !manager.state.model.isEmpty {
-                        Label(modelDisplayName, systemImage: "brain")
-                            .font(.caption)
+                        Text(modelDisplayName)
+                            .font(.caption2)
                             .foregroundColor(.secondary)
                     }
 
                     if !manager.state.gitBranch.isEmpty {
-                        Label(manager.state.gitBranch, systemImage: "arrow.triangle.branch")
-                            .font(.caption)
-                            .foregroundColor(.secondary)
+                        HStack(spacing: 2) {
+                            Image(systemName: "arrow.triangle.branch")
+                                .font(.system(size: 8))
+                            Text(manager.state.gitBranch)
+                                .lineLimit(1)
+                        }
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
                     }
                 }
 
-                Divider()
+                Spacer()
+            }
 
-                // Context usage section - always visible
-                ContextBarWithLabel(
+            if manager.state.isConnected {
+                // Row 2: Context bar with token breakdown
+                ContextBarWithBreakdown(
                     percentage: manager.state.contextPercentage,
-                    tokensUsed: manager.state.tokenUsage.totalTokens,
-                    tokensTotal: TokenUsage.contextWindow
+                    usage: manager.state.tokenUsage
                 )
 
-                // Two-column layout: Active/Recent tools on left, Last output on right
-                HStack(alignment: .top, spacing: 16) {
-                    // Left column: Tools
-                    VStack(alignment: .leading, spacing: 8) {
-                        // Active tools (limit to 2)
-                        if !manager.state.activeTools.isEmpty {
-                            ActiveToolsSectionCompact(tools: Array(manager.state.activeTools.prefix(2)))
-                        }
-
-                        // Recent tools (limit to 3)
-                        if !manager.state.recentTools.isEmpty {
-                            RecentToolsSectionCompact(tools: Array(manager.state.recentTools.prefix(3)))
+                // Row 3: Todo list (show up to 3)
+                if !manager.state.todos.isEmpty {
+                    VStack(alignment: .leading, spacing: 3) {
+                        ForEach(manager.state.todos.prefix(3)) { todo in
+                            HStack(spacing: 4) {
+                                Image(systemName: todoIcon(for: todo.status))
+                                    .font(.system(size: 8))
+                                    .foregroundColor(todoColor(for: todo.status))
+                                Text(todo.content)
+                                    .font(.caption2)
+                                    .foregroundColor(todo.status == .completed ? .secondary.opacity(0.6) : .secondary)
+                                    .lineLimit(1)
+                                    .strikethrough(todo.status == .completed)
+                                Spacer()
+                            }
                         }
                     }
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
-                    // Right column: Last output
-                    if !manager.state.lastMessage.isEmpty {
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text("Last Output")
-                                .font(.caption.weight(.medium))
-                            Text(manager.state.lastMessage)
-                                .font(.caption)
-                                .foregroundColor(.secondary)
-                                .lineLimit(4)
-                        }
+                // Row 4: Last message output
+                if !manager.state.lastMessage.isEmpty {
+                    Text(manager.state.lastMessage)
+                        .font(.caption2)
+                        .foregroundColor(.secondary)
+                        .lineLimit(2)
                         .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
+                // Row 5: Active/recent tools
+                if !manager.state.activeTools.isEmpty || !manager.state.recentTools.isEmpty {
+                    HStack(spacing: 4) {
+                        if let activeTool = manager.state.activeTools.first {
+                            ToolActivityIndicator(isActive: true, toolName: activeTool.toolName)
+                                .scaleEffect(0.5)
+                            Text(activeTool.toolName)
+                                .font(.caption2)
+                                .foregroundColor(.orange)
+                        } else if let recentTool = manager.state.recentTools.first {
+                            Image(systemName: "checkmark.circle.fill")
+                                .font(.system(size: 8))
+                                .foregroundColor(.green)
+                            Text(recentTool.toolName)
+                                .font(.caption2)
+                                .foregroundColor(.secondary)
+                            if let duration = recentTool.durationMs {
+                                Text("\(duration)ms")
+                                    .font(.caption2.monospacedDigit())
+                                    .foregroundColor(.secondary.opacity(0.7))
+                            }
+                        }
+                        Spacer()
                     }
                 }
 
             } else {
-                // Not connected state
-                VStack(spacing: 8) {
+                // Not connected state - centered
+                Spacer()
+                HStack(spacing: 8) {
                     Image(systemName: "terminal")
-                        .font(.largeTitle)
+                        .font(.title3)
                         .foregroundColor(.secondary)
 
-                    Text("No Claude Code session selected")
-                        .font(.caption)
-                        .foregroundColor(.secondary)
-
-                    if manager.availableSessions.isEmpty {
-                        Text("Start Claude Code in a terminal to begin monitoring")
-                            .font(.caption2)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("No session selected")
+                            .font(.caption)
                             .foregroundColor(.secondary)
-                            .multilineTextAlignment(.center)
+
+                        if manager.availableSessions.isEmpty {
+                            Text("Start Claude Code to begin")
+                                .font(.caption2)
+                                .foregroundColor(.secondary.opacity(0.7))
+                        } else {
+                            Text("\(manager.availableSessions.count) session\(manager.availableSessions.count == 1 ? "" : "s") available")
+                                .font(.caption2)
+                                .foregroundColor(.secondary.opacity(0.7))
+                        }
                     }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.vertical, 20)
+                Spacer()
             }
         }
-        .padding(12)
-        .frame(maxWidth: .infinity)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
     private var modelDisplayName: String {
         if manager.state.model.contains("opus") {
-            return "Opus 4.5"
+            return "Opus"
         } else if manager.state.model.contains("sonnet") {
-            return "Sonnet 4"
+            return "Sonnet"
         } else if manager.state.model.contains("haiku") {
             return "Haiku"
         }
         return "Claude"
     }
+
+    private func todoIcon(for status: ClaudeTodoItem.TodoStatus) -> String {
+        switch status {
+        case .pending:
+            return "circle"
+        case .inProgress:
+            return "circle.lefthalf.filled"
+        case .completed:
+            return "checkmark.circle.fill"
+        }
+    }
+
+    private func todoColor(for status: ClaudeTodoItem.TodoStatus) -> Color {
+        switch status {
+        case .pending:
+            return .secondary
+        case .inProgress:
+            return .orange
+        case .completed:
+            return .green
+        }
+    }
 }
 
-struct ActiveToolsSection: View {
-    let tools: [ToolExecution]
+// Context bar with token breakdown
+struct ContextBarWithBreakdown: View {
+    let percentage: Double
+    let usage: TokenUsage
+
+    private var barColor: Color {
+        if percentage > 80 { return .red }
+        if percentage > 60 { return .orange }
+        return .green
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Text("Active Tools")
-                    .font(.caption.weight(.medium))
-                Text("(\(tools.count))")
-                    .font(.caption)
+        VStack(alignment: .leading, spacing: 4) {
+            // Progress bar row
+            HStack(spacing: 6) {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(Color.gray.opacity(0.3))
+                        RoundedRectangle(cornerRadius: 2)
+                            .fill(barColor)
+                            .frame(width: max(0, geo.size.width * min(1, percentage / 100)))
+                    }
+                }
+                .frame(height: 6)
+
+                Text("\(Int(percentage))%")
+                    .font(.caption.monospacedDigit().bold())
+                    .foregroundColor(barColor)
+                    .frame(width: 36, alignment: .trailing)
+            }
+
+            // Token breakdown row
+            HStack(spacing: 12) {
+                TokenLabel(label: "In", value: usage.inputTokens, color: .blue)
+                TokenLabel(label: "Out", value: usage.outputTokens, color: .purple)
+                TokenLabel(label: "Cache", value: usage.cacheReadInputTokens, color: .cyan)
+
+                Spacer()
+
+                Text("\(formatTokens(usage.totalTokens)) / 200k")
+                    .font(.caption2.monospacedDigit())
                     .foregroundColor(.secondary)
             }
-
-            ForEach(tools) { tool in
-                HStack(spacing: 6) {
-                    ToolActivityIndicator(isActive: true, toolName: tool.toolName)
-                        .scaleEffect(0.8)
-
-                    Text(tool.toolName)
-                        .font(.caption)
-
-                    if let arg = tool.argument {
-                        Text(arg)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
         }
+    }
+
+    private func formatTokens(_ tokens: Int) -> String {
+        if tokens >= 1000 {
+            return "\(tokens / 1000)k"
+        }
+        return "\(tokens)"
     }
 }
 
-// Compact version for two-column layout
-struct ActiveToolsSectionCompact: View {
-    let tools: [ToolExecution]
+struct TokenLabel: View {
+    let label: String
+    let value: Int
+    let color: Color
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Active")
-                .font(.caption2.weight(.medium))
+        HStack(spacing: 2) {
+            Circle()
+                .fill(color.opacity(0.8))
+                .frame(width: 4, height: 4)
+            Text("\(label):")
+                .font(.caption2)
                 .foregroundColor(.secondary)
-
-            ForEach(tools) { tool in
-                HStack(spacing: 4) {
-                    ToolActivityIndicator(isActive: true, toolName: tool.toolName)
-                        .scaleEffect(0.6)
-
-                    Text(tool.toolName)
-                        .font(.caption2)
-                        .lineLimit(1)
-                }
-            }
-        }
-    }
-}
-
-struct RecentToolsSection: View {
-    let tools: [ToolExecution]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text("Recent Tools")
-                .font(.caption.weight(.medium))
-
-            ForEach(tools.prefix(5)) { tool in
-                HStack(spacing: 6) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 10))
-                        .foregroundColor(.green)
-
-                    Text(tool.toolName)
-                        .font(.caption)
-
-                    if let arg = tool.argument {
-                        Text(arg)
-                            .font(.caption)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-
-                    Spacer()
-
-                    if let duration = tool.durationMs {
-                        Text("\(duration)ms")
-                            .font(.caption2.monospacedDigit())
-                            .foregroundColor(.secondary)
-                    }
-                }
-            }
-        }
-    }
-}
-
-// Compact version for two-column layout
-struct RecentToolsSectionCompact: View {
-    let tools: [ToolExecution]
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Recent")
-                .font(.caption2.weight(.medium))
+            Text(formatValue(value))
+                .font(.caption2.monospacedDigit())
                 .foregroundColor(.secondary)
-
-            ForEach(tools) { tool in
-                HStack(spacing: 4) {
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 8))
-                        .foregroundColor(.green)
-
-                    Text(tool.toolName)
-                        .font(.caption2)
-
-                    if let arg = tool.argument {
-                        Text(arg)
-                            .font(.caption2)
-                            .foregroundColor(.secondary)
-                            .lineLimit(1)
-                    }
-                }
-            }
         }
     }
-}
 
-struct LastMessageSection: View {
-    let message: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text("Last Output")
-                .font(.caption.weight(.medium))
-
-            Text(message)
-                .font(.caption)
-                .foregroundColor(.secondary)
-                .lineLimit(3)
+    private func formatValue(_ v: Int) -> String {
+        if v >= 1000 {
+            return "\(v / 1000)k"
         }
+        return "\(v)"
     }
 }
 

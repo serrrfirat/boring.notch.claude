@@ -57,6 +57,43 @@ struct TokenUsage: Equatable {
         guard Self.contextWindow > 0 else { return 0 }
         return min(100, Double(totalTokens) / Double(Self.contextWindow) * 100)
     }
+
+    // MARK: - Cost Estimation (per 1M tokens, USD)
+    // Opus 4.5 pricing: $15/1M input, $75/1M output, $1.50/1M cache read, $18.75/1M cache write
+    // Sonnet 4: $3/1M input, $15/1M output, $0.30/1M cache read, $3.75/1M cache write
+
+    struct ModelPricing {
+        let inputPerMillion: Double
+        let outputPerMillion: Double
+        let cacheReadPerMillion: Double
+        let cacheWritePerMillion: Double
+    }
+
+    static let opusPricing = ModelPricing(
+        inputPerMillion: 15.0,
+        outputPerMillion: 75.0,
+        cacheReadPerMillion: 1.50,
+        cacheWritePerMillion: 18.75
+    )
+
+    static let sonnetPricing = ModelPricing(
+        inputPerMillion: 3.0,
+        outputPerMillion: 15.0,
+        cacheReadPerMillion: 0.30,
+        cacheWritePerMillion: 3.75
+    )
+
+    /// Calculate estimated cost for this session
+    func estimatedCost(model: String) -> Double {
+        let pricing = model.contains("opus") ? Self.opusPricing : Self.sonnetPricing
+
+        let inputCost = Double(inputTokens) / 1_000_000 * pricing.inputPerMillion
+        let outputCost = Double(outputTokens) / 1_000_000 * pricing.outputPerMillion
+        let cacheReadCost = Double(cacheReadInputTokens) / 1_000_000 * pricing.cacheReadPerMillion
+        let cacheWriteCost = Double(cacheCreationInputTokens) / 1_000_000 * pricing.cacheWritePerMillion
+
+        return inputCost + outputCost + cacheReadCost + cacheWriteCost
+    }
 }
 
 // MARK: - Tool Execution
@@ -133,6 +170,50 @@ struct ClaudeCodeState: Equatable {
     var contextPercentage: Double { tokenUsage.contextPercentage }
     var hasActiveTools: Bool { !activeTools.isEmpty }
     var currentToolName: String? { activeTools.first?.toolName }
+}
+
+// MARK: - Daily Stats (from stats-cache.json)
+
+/// Daily activity stats from ~/.claude/stats-cache.json
+struct DailyStats: Equatable {
+    var messageCount: Int = 0
+    var toolCallCount: Int = 0
+    var sessionCount: Int = 0
+    var tokensUsed: Int = 0
+    var date: String = ""
+
+    var isEmpty: Bool {
+        // Only empty if date is not set (means we haven't loaded stats yet)
+        date.isEmpty
+    }
+}
+
+/// Stats cache structure matching ~/.claude/stats-cache.json
+struct StatsCache: Codable {
+    let dailyActivity: [DailyActivity]?
+    let dailyModelTokens: [DailyModelTokens]?
+    let modelUsage: [String: ModelUsageStats]?
+    let totalSessions: Int?
+    let totalMessages: Int?
+
+    struct DailyActivity: Codable {
+        let date: String
+        let messageCount: Int?
+        let sessionCount: Int?
+        let toolCallCount: Int?
+    }
+
+    struct DailyModelTokens: Codable {
+        let date: String
+        let tokensByModel: [String: Int]?
+    }
+
+    struct ModelUsageStats: Codable {
+        let inputTokens: Int?
+        let outputTokens: Int?
+        let cacheReadInputTokens: Int?
+        let cacheCreationInputTokens: Int?
+    }
 }
 
 // MARK: - JSONL Parsing Helpers

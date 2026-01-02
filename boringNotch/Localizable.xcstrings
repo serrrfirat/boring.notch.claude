@@ -401,9 +401,6 @@
         }
       }
     },
-    "(%lld)" : {
-
-    },
     "%.0f seconds" : {
       "localizations" : {
         "ar" : {
@@ -704,6 +701,12 @@
         }
       }
     },
+    "%@ / 200k" : {
+
+    },
+    "%@:" : {
+
+    },
     "%d%%" : {
       "localizations" : {
         "ar" : {
@@ -900,6 +903,16 @@
           "stringUnit" : {
             "state" : "needs_review",
             "value" : "%lld"
+          }
+        }
+      }
+    },
+    "%lld session%@ available" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "new",
+            "value" : "%1$lld session%2$@ available"
           }
         }
       }
@@ -1706,12 +1719,6 @@
           }
         }
       }
-    },
-    "Active" : {
-
-    },
-    "Active Tools" : {
-
     },
     "Add" : {
       "localizations" : {
@@ -5913,9 +5920,6 @@
           }
         }
       }
-    },
-    "Connected" : {
-
     },
     "Context" : {
 
@@ -11927,9 +11931,6 @@
         }
       }
     },
-    "Last Output" : {
-
-    },
     "Layout Preview" : {
       "localizations" : {
         "ar" : {
@@ -14536,9 +14537,6 @@
     "No active sessions" : {
 
     },
-    "No Claude Code session selected" : {
-
-    },
     "No custom animation available" : {
       "localizations" : {
         "ar" : {
@@ -15039,6 +15037,9 @@
           }
         }
       }
+    },
+    "No session selected" : {
+
     },
     "No sessions" : {
 
@@ -16945,12 +16946,6 @@
           }
         }
       }
-    },
-    "Recent" : {
-
-    },
-    "Recent Tools" : {
-
     },
     "Refresh Sessions" : {
 
@@ -20860,7 +20855,7 @@
         }
       }
     },
-    "Start Claude Code in a terminal to begin monitoring" : {
+    "Start Claude Code to begin" : {
 
     },
     "Stopped" : {
