@@ -1720,6 +1720,9 @@
         }
       }
     },
+    "Active sessions" : {
+
+    },
     "Add" : {
       "localizations" : {
         "ar" : {
@@ -5221,6 +5224,9 @@
         }
       }
     },
+    "Claude Code" : {
+
+    },
     "Clear slot" : {
       "localizations" : {
         "ar" : {
@@ -7427,6 +7433,9 @@
         }
       }
     },
+    "Display session status dots below the notch when closed." : {
+
+    },
     "Download" : {
       "localizations" : {
         "ar" : {
@@ -8327,6 +8336,9 @@
           }
         }
       }
+    },
+    "Enable Claude Code integration" : {
+
     },
     "Enable colored spectrograms" : {
       "extractionState" : "stale",
@@ -18452,6 +18464,12 @@
         }
       }
     },
+    "Session dots show the status of active Claude Code sessions. Tap a dot to focus the corresponding IDE." : {
+
+    },
+    "Sessions" : {
+
+    },
     "Settings" : {
       "localizations" : {
         "ar" : {
@@ -19051,6 +19069,9 @@
           }
         }
       }
+    },
+    "Show Claude Code tab in the expanded notch view." : {
+
     },
     "Show cool face animation while inactive" : {
       "localizations" : {
@@ -20051,6 +20072,9 @@
           }
         }
       }
+    },
+    "Show session dots in closed notch" : {
+
     },
     "Show settings icon in notch" : {
       "localizations" : {

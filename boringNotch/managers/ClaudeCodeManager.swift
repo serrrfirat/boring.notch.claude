@@ -14,6 +14,13 @@ import AppKit
 final class ClaudeCodeManager: ObservableObject {
     static let shared = ClaudeCodeManager()
 
+    // MARK: - Cached Formatters (expensive to create repeatedly)
+    private static let dateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter
+    }()
+
     // MARK: - Published Properties
 
     @Published private(set) var availableSessions: [ClaudeSession] = []
@@ -129,10 +136,7 @@ final class ClaudeCodeManager: ObservableObject {
     func scanForSessions() {
         let fm = FileManager.default
 
-        print("[ClaudeCode] Scanning for sessions in: \(ideDir.path)")
-
         guard fm.fileExists(atPath: ideDir.path) else {
-            print("[ClaudeCode] IDE directory does not exist")
             availableSessions = []
             return
         }
@@ -141,40 +145,33 @@ final class ClaudeCodeManager: ObservableObject {
             let lockFiles = try fm.contentsOfDirectory(at: ideDir, includingPropertiesForKeys: nil)
                 .filter { $0.pathExtension == "lock" }
 
-            print("[ClaudeCode] Found \(lockFiles.count) lock files")
-
             var sessions: [ClaudeSession] = []
 
             for lockFile in lockFiles {
-                print("[ClaudeCode] Checking lock file: \(lockFile.lastPathComponent)")
-
                 guard let data = fm.contents(atPath: lockFile.path) else {
-                    print("[ClaudeCode] Could not read lock file data")
                     continue
                 }
 
                 do {
                     let session = try JSONDecoder().decode(ClaudeSession.self, from: data)
-                    print("[ClaudeCode] Decoded session: pid=\(session.pid), workspace=\(session.workspaceFolders.first ?? "none"), projectKey=\(session.projectKey ?? "none")")
 
                     // Verify process is still running
                     if isProcessRunning(pid: session.pid) {
-                        print("[ClaudeCode] Process \(session.pid) is running, adding session")
                         sessions.append(session)
-                    } else {
-                        print("[ClaudeCode] Process \(session.pid) is NOT running, skipping")
                     }
                 } catch {
-                    print("[ClaudeCode] Failed to decode session: \(error)")
+                    // Skip invalid lock files silently
                 }
             }
 
-            print("[ClaudeCode] Total active sessions: \(sessions.count)")
+            // Only log when session count changes
+            if sessions.count != availableSessions.count {
+                print("[ClaudeCode] Active sessions: \(sessions.count)")
+            }
             availableSessions = sessions
 
             // Auto-select if only one session and none selected
             if selectedSession == nil && sessions.count == 1 {
-                print("[ClaudeCode] Auto-selecting single session")
                 selectSession(sessions[0])
             }
 
@@ -233,8 +230,8 @@ final class ClaudeCodeManager: ObservableObject {
         // Initial scan
         scanForSessions()
 
-        // Periodic scan every 5 seconds
-        sessionScanTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: true) { [weak self] _ in
+        // Periodic scan every 10 seconds (reduced from 5 to minimize memory pressure)
+        sessionScanTimer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.scanForSessions()
                 self?.loadDailyStats()
@@ -438,13 +435,10 @@ final class ClaudeCodeManager: ObservableObject {
 
     /// Load recent history for a specific session
     private func loadRecentHistoryForSession(from file: URL, sessionId: String) {
-        print("[ClaudeCode-Multi] Loading recent history for session: \(sessionId)")
-
         // Read only the last ~50KB of the file to get recent lines (avoids loading huge files into memory)
         let maxBytesToRead: UInt64 = 50 * 1024  // 50KB should be plenty for last 50 lines
 
         guard let handle = try? FileHandle(forReadingFrom: file) else {
-            print("[ClaudeCode-Multi] Could not open file for reading")
             return
         }
         defer { try? handle.close() }
@@ -721,13 +715,10 @@ final class ClaudeCodeManager: ObservableObject {
     // MARK: - Data Reading
 
     private func loadRecentHistory(from file: URL) {
-        print("[ClaudeCode] Loading recent history from: \(file.lastPathComponent)")
-
         // Read only the last ~50KB of the file to get recent lines (avoids loading huge files into memory)
         let maxBytesToRead: UInt64 = 50 * 1024  // 50KB should be plenty for last 50 lines
 
         guard let handle = try? FileHandle(forReadingFrom: file) else {
-            print("[ClaudeCode] Could not open file for reading")
             return
         }
         defer { try? handle.close() }
@@ -739,14 +730,12 @@ final class ClaudeCodeManager: ObservableObject {
 
         guard let data = try? handle.readToEnd(),
               let content = String(data: data, encoding: .utf8) else {
-            print("[ClaudeCode] Could not read file contents")
             return
         }
 
         let lines = content.components(separatedBy: .newlines)
         // Skip first line if we started mid-file (it might be truncated)
         let linesToProcess = startPosition > 0 ? Array(lines.dropFirst().suffix(50)) : Array(lines.suffix(50))
-        print("[ClaudeCode] Parsing \(linesToProcess.count) recent lines")
 
         // Disable permission tracking during history loading - these are already completed tools
         isLoadingHistory = true
@@ -760,7 +749,6 @@ final class ClaudeCodeManager: ObservableObject {
         state.isThinking = false
         pendingToolChecks.removeAll()
 
-        print("[ClaudeCode] After parsing - model: \(state.model), tokens: \(state.tokenUsage.totalTokens), connected: \(state.isConnected)")
         state.lastUpdateTime = Date()
     }
 
@@ -780,7 +768,6 @@ final class ClaudeCodeManager: ObservableObject {
         state.isThinking = true
 
         let lines = content.components(separatedBy: .newlines)
-        print("[ClaudeCode] 📥 Reading \(lines.filter { !$0.isEmpty }.count) new lines from session file")
         for line in lines where !line.isEmpty {
             parseJSONLLine(line)
         }
@@ -866,7 +853,6 @@ final class ClaudeCodeManager: ObservableObject {
                     case "tool_use":
                         if let toolId = item["id"] as? String,
                            let toolName = item["name"] as? String {
-                            print("[ClaudeCode] 🔧 Detected tool_use: \(toolName) (id: \(toolId))")
 
                             // Parse TodoWrite tool to extract todos
                             if toolName == "TodoWrite",
@@ -884,7 +870,6 @@ final class ClaudeCodeManager: ObservableObject {
                             // Add to active tools
                             if !state.activeTools.contains(where: { $0.id == toolId }) {
                                 state.activeTools.append(tool)
-                                print("[ClaudeCode] ✅ Added tool to activeTools. Count: \(state.activeTools.count)")
                                 // Start tracking this tool for permission check
                                 startPermissionCheck(toolId: toolId, toolName: toolName)
                             }
@@ -972,11 +957,9 @@ final class ClaudeCodeManager: ObservableObject {
     private func startPermissionCheck(toolId: String, toolName: String) {
         // Don't track permission during history loading - those tools are already completed
         guard !isLoadingHistory else {
-            print("[ClaudeCode] Skipping permission check for \(toolName) - loading history")
             return
         }
 
-        print("[ClaudeCode] 🕐 Starting permission check for tool: \(toolName) (id: \(toolId))")
         pendingToolChecks[toolId] = Date()
 
         // Start or restart the permission check timer
@@ -990,14 +973,12 @@ final class ClaudeCodeManager: ObservableObject {
 
     /// Clear permission tracking for a tool (when it completes)
     private func clearPermissionCheck(toolId: String) {
-        print("[ClaudeCode] Clearing permission check for tool id: \(toolId)")
         pendingToolChecks.removeValue(forKey: toolId)
 
         // If we were showing permission needed for this tool, clear it
         if state.needsPermission {
             // Check if any other tools still need permission
             if pendingToolChecks.isEmpty {
-                print("[ClaudeCode] All tools completed, clearing permission indicator")
                 state.needsPermission = false
                 state.pendingPermissionTool = nil
                 permissionCheckTimer?.invalidate()
@@ -1018,24 +999,20 @@ final class ClaudeCodeManager: ObservableObject {
     /// Check if any pending tools have exceeded the delay (likely waiting for permission)
     private func checkPendingPermissions() {
         let now = Date()
-        print("[ClaudeCode] Checking \(pendingToolChecks.count) pending tools for permission, activeTools: \(state.activeTools.count)")
 
         for (toolId, startTime) in pendingToolChecks {
             let elapsed = now.timeIntervalSince(startTime)
-            print("[ClaudeCode] Tool \(toolId) elapsed: \(elapsed)s (threshold: \(permissionCheckDelay)s)")
             if elapsed >= permissionCheckDelay {
                 // This tool has been pending too long - likely needs permission
                 if let tool = state.activeTools.first(where: { $0.id == toolId }) {
                     if !state.needsPermission {
-                        print("[ClaudeCode] ⚠️ Tool '\(tool.toolName)' likely waiting for permission - showing indicator")
+                        print("[ClaudeCode] ⚠️ Tool '\(tool.toolName)' waiting for permission")
                     }
                     state.needsPermission = true
                     state.pendingPermissionTool = tool.toolName
                     return
                 } else {
-                    // Tool not in activeTools - it might have been from history parsing
-                    // Still show permission indicator with a generic name
-                    print("[ClaudeCode] ⚠️ Tool \(toolId) not found in activeTools (\(state.activeTools.map { $0.id })), but exceeded threshold - showing indicator")
+                    // Tool not in activeTools - still show permission indicator
                     if !state.needsPermission {
                         state.needsPermission = true
                         state.pendingPermissionTool = "Tool"
@@ -1133,7 +1110,6 @@ final class ClaudeCodeManager: ObservableObject {
 
         guard FileManager.default.fileExists(atPath: statsFile.path),
               let data = FileManager.default.contents(atPath: statsFile.path) else {
-            print("[ClaudeCode] stats-cache.json not found")
             return
         }
 
@@ -1141,9 +1117,7 @@ final class ClaudeCodeManager: ObservableObject {
             let cache = try JSONDecoder().decode(StatsCache.self, from: data)
 
             // Get today's date in the format used by the cache (YYYY-MM-DD)
-            let formatter = DateFormatter()
-            formatter.dateFormat = "yyyy-MM-dd"
-            let today = formatter.string(from: Date())
+            let today = Self.dateFormatter.string(from: Date())
 
             var stats = DailyStats()
 
@@ -1176,8 +1150,10 @@ final class ClaudeCodeManager: ObservableObject {
                 }
             }
 
-            dailyStats = stats
-            print("[ClaudeCode] Loaded daily stats for \(stats.date): \(stats.messageCount) msgs, \(stats.toolCallCount) tools, \(stats.tokensUsed) tokens")
+            // Only update and log if stats changed
+            if stats != dailyStats {
+                dailyStats = stats
+            }
 
         } catch {
             print("[ClaudeCode] Error parsing stats-cache.json: \(error)")

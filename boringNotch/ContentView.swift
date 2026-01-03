@@ -77,6 +77,7 @@ struct ContentView: View {
         {
             chinWidth += (2 * max(0, vm.effectiveClosedNotchHeight - 12) + 20)
         } else if !coordinator.expandingView.show && vm.notchState == .closed
+            && Defaults[.enableClaudeCode] && Defaults[.enableClaudeCodeCollapsedView]
             && !claudeCodeManager.availableSessions.isEmpty && !vm.hideOnClosed
         {
             // Claude Code compact view - dots are below the notch, no side extension needed
@@ -294,7 +295,7 @@ struct ContentView: View {
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
-                      } else if !coordinator.expandingView.show && vm.notchState == .closed && !claudeCodeManager.availableSessions.isEmpty && !vm.hideOnClosed {
+                      } else if !coordinator.expandingView.show && vm.notchState == .closed && Defaults[.enableClaudeCode] && Defaults[.enableClaudeCodeCollapsedView] && !claudeCodeManager.availableSessions.isEmpty && !vm.hideOnClosed {
                           // Claude Code compact view - show when any Claude Code sessions exist (like music shows even when paused)
                           ClaudeCodeCompactView()
                               .frame(height: vm.effectiveClosedNotchHeight)
