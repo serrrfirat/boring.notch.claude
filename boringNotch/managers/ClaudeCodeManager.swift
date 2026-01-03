@@ -29,16 +29,16 @@ final class ClaudeCodeManager: ObservableObject {
     /// Sessions currently waiting for user permission approval
     @Published private(set) var sessionsNeedingPermission: [ClaudeSession] = []
 
-    /// True if any session has activity (active tools or needs permission)
+    /// True if any session has activity (thinking, active tools, or needs permission)
     var hasAnySessionActivity: Bool {
-        // Check if any session has active tools or needs permission
+        // Check if any session is active (thinking or has active tools) or needs permission
         for sessionState in sessionStates.values {
-            if sessionState.hasActiveTools || sessionState.needsPermission {
+            if sessionState.isActive || sessionState.needsPermission {
                 return true
             }
         }
         // Also check selected session's state
-        if state.hasActiveTools || state.needsPermission {
+        if state.isActive || state.needsPermission {
             return true
         }
         return !sessionsNeedingPermission.isEmpty
@@ -471,6 +471,27 @@ final class ClaudeCodeManager: ObservableObject {
         // Extract model
         if let model = message["model"] as? String {
             sessionStates[sessionId]?.model = model
+        }
+
+        // Track thinking state based on message role
+        if let role = message["role"] as? String {
+            if role == "assistant" {
+                // Assistant message started - Claude is thinking/generating
+                sessionStates[sessionId]?.isThinking = true
+
+                // Check if this message has a stop_reason (indicates completion)
+                if message["stop_reason"] != nil {
+                    sessionStates[sessionId]?.isThinking = false
+                }
+            } else if role == "user" {
+                // User message means Claude finished and is waiting for input
+                sessionStates[sessionId]?.isThinking = false
+            }
+        }
+
+        // Also check for stop_reason at top level (message completion indicator)
+        if message["stop_reason"] != nil {
+            sessionStates[sessionId]?.isThinking = false
         }
 
         // Extract message content for tool_use detection

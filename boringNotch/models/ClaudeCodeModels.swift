@@ -171,10 +171,16 @@ struct ClaudeCodeState: Equatable {
     /// The tool waiting for permission (if any)
     var pendingPermissionTool: String?
 
+    /// True when Claude is actively generating a response (thinking)
+    var isThinking: Bool = false
+
     // Convenience accessors
     var contextPercentage: Double { tokenUsage.contextPercentage }
     var hasActiveTools: Bool { !activeTools.isEmpty }
     var currentToolName: String? { activeTools.first?.toolName }
+
+    /// True when the session is actively processing (thinking or running tools)
+    var isActive: Bool { isThinking || hasActiveTools }
 }
 
 // MARK: - Daily Stats (from stats-cache.json)

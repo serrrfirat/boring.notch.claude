@@ -3,7 +3,7 @@
 //  boringNotch
 //
 //  Row of dots showing all active Claude Code sessions
-//  Green blinking = active tools, Orange blinking = needs permission, Gray = idle
+//  Green blinking = active (thinking or running tools), Orange blinking = needs permission, Gray = idle
 //
 
 import SwiftUI
@@ -35,14 +35,14 @@ struct SessionDot: View {
     private var dotColor: Color {
         if state?.needsPermission == true {
             return .orange
-        } else if state?.hasActiveTools == true {
+        } else if state?.isActive == true {
             return .green
         }
         return .gray
     }
 
     private var shouldBlink: Bool {
-        state?.needsPermission == true || state?.hasActiveTools == true
+        state?.needsPermission == true || state?.isActive == true
     }
 
     var body: some View {
@@ -77,8 +77,8 @@ struct SessionDot: View {
         var text = session.displayName
         if state?.needsPermission == true {
             text += " - Needs permission"
-        } else if state?.hasActiveTools == true {
-            text += " - Running"
+        } else if state?.isActive == true {
+            text += " - Working"
         } else {
             text += " - Idle"
         }
@@ -121,14 +121,14 @@ struct SessionDotCompact: View {
     private var dotColor: Color {
         if state?.needsPermission == true {
             return .orange
-        } else if state?.hasActiveTools == true {
+        } else if state?.isActive == true {
             return .green
         }
         return .gray
     }
 
     private var shouldBlink: Bool {
-        state?.needsPermission == true || state?.hasActiveTools == true
+        state?.needsPermission == true || state?.isActive == true
     }
 
     var body: some View {
