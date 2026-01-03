@@ -289,8 +289,8 @@ struct ContentView: View {
                       } else if (!coordinator.expandingView.show || coordinator.expandingView.type == .music) && vm.notchState == .closed && (musicManager.isPlaying || !musicManager.isPlayerIdle) && coordinator.musicLiveActivityEnabled && !vm.hideOnClosed {
                           MusicLiveActivity()
                               .frame(alignment: .center)
-                      } else if !coordinator.expandingView.show && vm.notchState == .closed && claudeCodeManager.state.needsPermission && !vm.hideOnClosed {
-                          // Claude Code compact view - only show when permission is needed
+                      } else if !coordinator.expandingView.show && vm.notchState == .closed && claudeCodeManager.hasAnySessionActivity && !vm.hideOnClosed {
+                          // Claude Code compact view - show only when sessions have activity (tools running or permission needed)
                           ClaudeCodeCompactView()
                               .frame(height: vm.effectiveClosedNotchHeight)
                       } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {

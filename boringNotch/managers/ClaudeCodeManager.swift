@@ -21,6 +21,29 @@ final class ClaudeCodeManager: ObservableObject {
     @Published private(set) var state: ClaudeCodeState = ClaudeCodeState()
     @Published private(set) var dailyStats: DailyStats = DailyStats()
 
+    // MARK: - Multi-Session Permission Tracking
+
+    /// Per-session state tracking for permission detection
+    @Published private(set) var sessionStates: [String: ClaudeCodeState] = [:]
+
+    /// Sessions currently waiting for user permission approval
+    @Published private(set) var sessionsNeedingPermission: [ClaudeSession] = []
+
+    /// True if any session has activity (active tools or needs permission)
+    var hasAnySessionActivity: Bool {
+        // Check if any session has active tools or needs permission
+        for sessionState in sessionStates.values {
+            if sessionState.hasActiveTools || sessionState.needsPermission {
+                return true
+            }
+        }
+        // Also check selected session's state
+        if state.hasActiveTools || state.needsPermission {
+            return true
+        }
+        return !sessionsNeedingPermission.isEmpty
+    }
+
     // MARK: - Private Properties
 
     // Use the real home directory, not the sandboxed container
@@ -45,12 +68,25 @@ final class ClaudeCodeManager: ObservableObject {
 
     /// Timer to detect when a tool is waiting for permission (no result after delay)
     private var permissionCheckTimer: Timer?
-    /// Tracks tool IDs that we're waiting on for permission check
+    /// Tracks tool IDs that we're waiting on for permission check (for selected session - legacy)
     private var pendingToolChecks: [String: Date] = [:]
     /// Delay before assuming a tool needs permission (seconds)
     private let permissionCheckDelay: TimeInterval = 2.5
     /// Flag to disable permission tracking during history loading
     private var isLoadingHistory: Bool = false
+
+    // MARK: - Multi-Session Watching (for permission detection across all sessions)
+
+    /// File watchers for all active sessions (keyed by session.id)
+    private var sessionWatchers: [String: DispatchSourceFileSystemObject] = [:]
+    /// File handles for all active sessions
+    private var sessionFileHandles: [String: FileHandle] = [:]
+    /// Read positions for all active sessions
+    private var sessionReadPositions: [String: UInt64] = [:]
+    /// Pending tool checks per session: [sessionId: [toolId: startTime]]
+    private var pendingToolChecksBySession: [String: [String: Date]] = [:]
+    /// History loading flag per session
+    private var isLoadingHistoryBySession: [String: Bool] = [:]
 
     // MARK: - Initialization
 
@@ -123,6 +159,22 @@ final class ClaudeCodeManager: ObservableObject {
                 selectedSession = nil
                 state = ClaudeCodeState()
                 stopWatchingSessionFile()
+            }
+
+            // MARK: Multi-Session Watching - Watch ALL sessions for permission detection
+            let currentSessionIds = Set(sessions.map { $0.id })
+
+            // Start watching new sessions
+            for session in sessions {
+                if sessionWatchers[session.id] == nil {
+                    startWatchingSession(session)
+                }
+            }
+
+            // Stop watching sessions that no longer exist
+            let watchedIds = Array(sessionWatchers.keys)
+            for watchedId in watchedIds where !currentSessionIds.contains(watchedId) {
+                stopWatchingSession(id: watchedId)
             }
 
         } catch {
@@ -270,6 +322,278 @@ final class ClaudeCodeManager: ObservableObject {
         stopWatchingSessionFile()
         ideDirWatcher?.cancel()
         ideDirWatcher = nil
+
+        // Stop all multi-session watchers
+        for sessionId in sessionWatchers.keys {
+            stopWatchingSession(id: sessionId)
+        }
+    }
+
+    // MARK: - Multi-Session Watching (Permission Detection for All Sessions)
+
+    /// Start watching a specific session for permission detection
+    private func startWatchingSession(_ session: ClaudeSession) {
+        guard sessionWatchers[session.id] == nil,
+              let projectKey = session.projectKey else {
+            return
+        }
+
+        let projectDir = projectsDir.appendingPathComponent(projectKey)
+        guard let jsonlFile = findCurrentSessionFile(in: projectDir) else {
+            print("[ClaudeCode-Multi] No session file found for: \(session.displayName)")
+            return
+        }
+
+        print("[ClaudeCode-Multi] Starting to watch session: \(session.displayName)")
+
+        // Initialize state for this session
+        var sessionState = ClaudeCodeState()
+        sessionState.cwd = session.workspaceFolders.first ?? ""
+        sessionState.isConnected = true
+        sessionStates[session.id] = sessionState
+
+        // Open file handle
+        do {
+            let handle = try FileHandle(forReadingFrom: jsonlFile)
+            handle.seekToEndOfFile()
+            sessionFileHandles[session.id] = handle
+            sessionReadPositions[session.id] = handle.offsetInFile
+
+            // Load recent history for initial state
+            loadRecentHistoryForSession(from: jsonlFile, sessionId: session.id)
+
+        } catch {
+            print("[ClaudeCode-Multi] Error opening session file: \(error)")
+            return
+        }
+
+        // Set up file system watcher
+        let fd = open(jsonlFile.path, O_EVTONLY)
+        guard fd >= 0 else {
+            print("[ClaudeCode-Multi] Failed to open file descriptor for watching")
+            return
+        }
+
+        let source = DispatchSource.makeFileSystemObjectSource(
+            fileDescriptor: fd,
+            eventMask: [.write, .extend],
+            queue: .main
+        )
+
+        source.setEventHandler { [weak self] in
+            self?.readNewSessionDataForSession(sessionId: session.id)
+        }
+
+        source.setCancelHandler {
+            close(fd)
+        }
+
+        source.resume()
+        sessionWatchers[session.id] = source
+    }
+
+    /// Stop watching a specific session
+    private func stopWatchingSession(id sessionId: String) {
+        sessionWatchers[sessionId]?.cancel()
+        sessionWatchers.removeValue(forKey: sessionId)
+        sessionFileHandles[sessionId]?.closeFile()
+        sessionFileHandles.removeValue(forKey: sessionId)
+        sessionReadPositions.removeValue(forKey: sessionId)
+        sessionStates.removeValue(forKey: sessionId)
+        pendingToolChecksBySession.removeValue(forKey: sessionId)
+        isLoadingHistoryBySession.removeValue(forKey: sessionId)
+
+        // Update sessionsNeedingPermission
+        sessionsNeedingPermission.removeAll { $0.id == sessionId }
+
+        print("[ClaudeCode-Multi] Stopped watching session: \(sessionId)")
+    }
+
+    /// Load recent history for a specific session
+    private func loadRecentHistoryForSession(from file: URL, sessionId: String) {
+        print("[ClaudeCode-Multi] Loading recent history for session: \(sessionId)")
+
+        guard let data = FileManager.default.contents(atPath: file.path),
+              let content = String(data: data, encoding: .utf8) else {
+            return
+        }
+
+        let lines = content.components(separatedBy: .newlines)
+        let recentLines = lines.suffix(50)
+
+        // Disable permission tracking during history loading
+        isLoadingHistoryBySession[sessionId] = true
+        for line in recentLines where !line.isEmpty {
+            parseJSONLLineForSession(line, sessionId: sessionId)
+        }
+        isLoadingHistoryBySession[sessionId] = false
+
+        // Clear any active tools from history - they're already done
+        sessionStates[sessionId]?.activeTools.removeAll()
+        pendingToolChecksBySession[sessionId]?.removeAll()
+    }
+
+    /// Read new data for a specific session
+    private func readNewSessionDataForSession(sessionId: String) {
+        guard let handle = sessionFileHandles[sessionId],
+              let lastPosition = sessionReadPositions[sessionId] else { return }
+
+        handle.seek(toFileOffset: lastPosition)
+        let newData = handle.readDataToEndOfFile()
+        sessionReadPositions[sessionId] = handle.offsetInFile
+
+        guard !newData.isEmpty,
+              let content = String(data: newData, encoding: .utf8) else { return }
+
+        let lines = content.components(separatedBy: .newlines)
+        for line in lines where !line.isEmpty {
+            parseJSONLLineForSession(line, sessionId: sessionId)
+        }
+
+        sessionStates[sessionId]?.lastUpdateTime = Date()
+    }
+
+    /// Parse a JSONL line for a specific session (focused on permission detection)
+    private func parseJSONLLineForSession(_ line: String, sessionId: String) {
+        guard let data = line.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return
+        }
+
+        // Parse message content for tool detection
+        if let message = json["message"] as? [String: Any] {
+            parseMessageForSession(message, sessionId: sessionId)
+        }
+    }
+
+    /// Parse message content for a specific session
+    private func parseMessageForSession(_ message: [String: Any], sessionId: String) {
+        // Extract model
+        if let model = message["model"] as? String {
+            sessionStates[sessionId]?.model = model
+        }
+
+        // Extract message content for tool_use detection
+        if let content = message["content"] as? [[String: Any]] {
+            for item in content {
+                if let type = item["type"] as? String {
+                    switch type {
+                    case "tool_use":
+                        if let toolId = item["id"] as? String,
+                           let toolName = item["name"] as? String {
+                            let tool = ToolExecution(
+                                id: toolId,
+                                toolName: toolName,
+                                argument: extractToolArgument(from: item["input"]),
+                                startTime: Date()
+                            )
+                            if sessionStates[sessionId]?.activeTools.contains(where: { $0.id == toolId }) != true {
+                                sessionStates[sessionId]?.activeTools.append(tool)
+                                startPermissionCheckForSession(sessionId: sessionId, toolId: toolId, toolName: toolName)
+                            }
+                        }
+
+                    default:
+                        break
+                    }
+                }
+            }
+        }
+
+        // Check for tool_result in user messages to mark tools as complete
+        if let role = message["role"] as? String, role == "user",
+           let content = message["content"] as? [[String: Any]] {
+            for item in content {
+                if let type = item["type"] as? String, type == "tool_result",
+                   let toolUseId = item["tool_use_id"] as? String {
+                    clearPermissionCheckForSession(sessionId: sessionId, toolId: toolUseId)
+
+                    // Mark tool as complete
+                    if let index = sessionStates[sessionId]?.activeTools.firstIndex(where: { $0.id == toolUseId }) {
+                        sessionStates[sessionId]?.activeTools.remove(at: index)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Start tracking a tool for permission check in a specific session
+    private func startPermissionCheckForSession(sessionId: String, toolId: String, toolName: String) {
+        guard isLoadingHistoryBySession[sessionId] != true else { return }
+
+        pendingToolChecksBySession[sessionId, default: [:]][toolId] = Date()
+
+        // Start or restart the permission check timer
+        permissionCheckTimer?.invalidate()
+        permissionCheckTimer = Timer.scheduledTimer(withTimeInterval: permissionCheckDelay, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                self?.checkPendingPermissionsForAllSessions()
+            }
+        }
+    }
+
+    /// Clear permission tracking for a tool in a specific session
+    private func clearPermissionCheckForSession(sessionId: String, toolId: String) {
+        pendingToolChecksBySession[sessionId]?.removeValue(forKey: toolId)
+
+        // If this session was showing permission needed, clear it
+        if sessionStates[sessionId]?.needsPermission == true {
+            if pendingToolChecksBySession[sessionId]?.isEmpty ?? true {
+                sessionStates[sessionId]?.needsPermission = false
+                sessionStates[sessionId]?.pendingPermissionTool = nil
+            }
+        }
+
+        // Update sessionsNeedingPermission
+        updateSessionsNeedingPermission()
+    }
+
+    /// Check all sessions for pending permissions
+    private func checkPendingPermissionsForAllSessions() {
+        let now = Date()
+
+        for (sessionId, toolChecks) in pendingToolChecksBySession {
+            for (toolId, startTime) in toolChecks {
+                let elapsed = now.timeIntervalSince(startTime)
+                if elapsed >= permissionCheckDelay {
+                    // This tool has been pending too long - likely needs permission
+                    if let tool = sessionStates[sessionId]?.activeTools.first(where: { $0.id == toolId }) {
+                        sessionStates[sessionId]?.needsPermission = true
+                        sessionStates[sessionId]?.pendingPermissionTool = tool.toolName
+                        break
+                    }
+                }
+            }
+        }
+
+        updateSessionsNeedingPermission()
+
+        // Stop timer if no more pending tools across all sessions
+        let hasPendingTools = pendingToolChecksBySession.values.contains { !$0.isEmpty }
+        if !hasPendingTools {
+            permissionCheckTimer?.invalidate()
+            permissionCheckTimer = nil
+        }
+    }
+
+    /// Update the sessionsNeedingPermission array based on current state
+    private func updateSessionsNeedingPermission() {
+        var needingPermission: [ClaudeSession] = []
+
+        for session in availableSessions {
+            if sessionStates[session.id]?.needsPermission == true {
+                needingPermission.append(session)
+            }
+        }
+
+        // Also check the selected session's state
+        if state.needsPermission, let selected = selectedSession {
+            if !needingPermission.contains(where: { $0.id == selected.id }) {
+                needingPermission.append(selected)
+            }
+        }
+
+        sessionsNeedingPermission = needingPermission
     }
 
     private func findCurrentSessionFile(in projectDir: URL) -> URL? {
@@ -578,6 +902,64 @@ final class ClaudeCodeManager: ObservableObject {
                 }
             }
         }
+    }
+
+    // MARK: - IDE Focus
+
+    /// Bring the IDE running Claude Code to the front
+    /// - Parameter session: The session to focus. If nil, focuses the selected session.
+    func focusIDE(for session: ClaudeSession? = nil) {
+        guard let targetSession = session ?? selectedSession else {
+            print("[ClaudeCode] No session to focus")
+            return
+        }
+
+        let ideName = targetSession.ideName.lowercased()
+        print("[ClaudeCode] Attempting to focus IDE: \(targetSession.ideName)")
+
+        // Map common IDE names to bundle identifiers
+        let bundleIdentifiers: [String] = {
+            if ideName.contains("cursor") {
+                return ["com.todesktop.230313mzl4w4u92"]
+            } else if ideName.contains("code") || ideName.contains("vscode") {
+                return ["com.microsoft.VSCode", "com.visualstudio.code.oss"]
+            } else if ideName.contains("windsurf") {
+                return ["com.codeium.windsurf"]
+            } else if ideName.contains("zed") {
+                return ["dev.zed.Zed"]
+            } else {
+                // Try to find by process ID as fallback
+                return []
+            }
+        }()
+
+        // Try to activate by bundle identifier first
+        for bundleId in bundleIdentifiers {
+            if let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first {
+                print("[ClaudeCode] Found app by bundle ID: \(bundleId)")
+                app.activate(options: [.activateIgnoringOtherApps])
+                return
+            }
+        }
+
+        // Fallback: find by PID
+        let runningApps = NSWorkspace.shared.runningApplications
+        if let app = runningApps.first(where: { $0.processIdentifier == Int32(targetSession.pid) }) {
+            print("[ClaudeCode] Found app by PID: \(targetSession.pid)")
+            app.activate(options: [.activateIgnoringOtherApps])
+            return
+        }
+
+        // Last resort: try to find any app with matching name
+        if let app = runningApps.first(where: {
+            $0.localizedName?.lowercased().contains(ideName) == true
+        }) {
+            print("[ClaudeCode] Found app by name match: \(app.localizedName ?? "unknown")")
+            app.activate(options: [.activateIgnoringOtherApps])
+            return
+        }
+
+        print("[ClaudeCode] Could not find IDE to focus")
     }
 
     // MARK: - Notifications
