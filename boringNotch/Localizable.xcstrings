@@ -2821,9 +2821,6 @@
         }
       }
     },
-    "Approval needed" : {
-
-    },
     "Auto-scroll to next event" : {
       "localizations" : {
         "ar" : {
@@ -15047,9 +15044,6 @@
     "No sessions" : {
 
     },
-    "Not connected" : {
-
-    },
     "Not Now" : {
       "localizations" : {
         "ar" : {
@@ -22866,9 +22860,6 @@
           }
         }
       }
-    },
-    "Waiting for activity..." : {
-
     },
     "Welcome" : {
       "localizations" : {
