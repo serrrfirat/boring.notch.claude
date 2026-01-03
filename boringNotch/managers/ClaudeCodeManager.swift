@@ -440,17 +440,32 @@ final class ClaudeCodeManager: ObservableObject {
     private func loadRecentHistoryForSession(from file: URL, sessionId: String) {
         print("[ClaudeCode-Multi] Loading recent history for session: \(sessionId)")
 
-        guard let data = FileManager.default.contents(atPath: file.path),
+        // Read only the last ~50KB of the file to get recent lines (avoids loading huge files into memory)
+        let maxBytesToRead: UInt64 = 50 * 1024  // 50KB should be plenty for last 50 lines
+
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            print("[ClaudeCode-Multi] Could not open file for reading")
+            return
+        }
+        defer { try? handle.close() }
+
+        // Seek to near the end of the file
+        let fileSize = handle.seekToEndOfFile()
+        let startPosition = fileSize > maxBytesToRead ? fileSize - maxBytesToRead : 0
+        handle.seek(toFileOffset: startPosition)
+
+        guard let data = try? handle.readToEnd(),
               let content = String(data: data, encoding: .utf8) else {
             return
         }
 
         let lines = content.components(separatedBy: .newlines)
-        let recentLines = lines.suffix(50)
+        // Skip first line if we started mid-file (it might be truncated)
+        let linesToProcess = startPosition > 0 ? Array(lines.dropFirst().suffix(50)) : Array(lines.suffix(50))
 
         // Disable permission tracking during history loading
         isLoadingHistoryBySession[sessionId] = true
-        for line in recentLines where !line.isEmpty {
+        for line in linesToProcess where !line.isEmpty {
             parseJSONLLineForSession(line, sessionId: sessionId)
         }
         isLoadingHistoryBySession[sessionId] = false
@@ -708,20 +723,34 @@ final class ClaudeCodeManager: ObservableObject {
     private func loadRecentHistory(from file: URL) {
         print("[ClaudeCode] Loading recent history from: \(file.lastPathComponent)")
 
-        // Read last ~50 lines for initial state
-        guard let data = FileManager.default.contents(atPath: file.path),
+        // Read only the last ~50KB of the file to get recent lines (avoids loading huge files into memory)
+        let maxBytesToRead: UInt64 = 50 * 1024  // 50KB should be plenty for last 50 lines
+
+        guard let handle = try? FileHandle(forReadingFrom: file) else {
+            print("[ClaudeCode] Could not open file for reading")
+            return
+        }
+        defer { try? handle.close() }
+
+        // Seek to near the end of the file
+        let fileSize = handle.seekToEndOfFile()
+        let startPosition = fileSize > maxBytesToRead ? fileSize - maxBytesToRead : 0
+        handle.seek(toFileOffset: startPosition)
+
+        guard let data = try? handle.readToEnd(),
               let content = String(data: data, encoding: .utf8) else {
             print("[ClaudeCode] Could not read file contents")
             return
         }
 
         let lines = content.components(separatedBy: .newlines)
-        let recentLines = lines.suffix(50)
-        print("[ClaudeCode] Parsing \(recentLines.count) recent lines from \(lines.count) total")
+        // Skip first line if we started mid-file (it might be truncated)
+        let linesToProcess = startPosition > 0 ? Array(lines.dropFirst().suffix(50)) : Array(lines.suffix(50))
+        print("[ClaudeCode] Parsing \(linesToProcess.count) recent lines")
 
         // Disable permission tracking during history loading - these are already completed tools
         isLoadingHistory = true
-        for line in recentLines where !line.isEmpty {
+        for line in linesToProcess where !line.isEmpty {
             parseJSONLLine(line)
         }
         isLoadingHistory = false
