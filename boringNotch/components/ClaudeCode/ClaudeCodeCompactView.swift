@@ -10,59 +10,29 @@ import SwiftUI
 
 struct ClaudeCodeCompactView: View {
     @ObservedObject var manager = ClaudeCodeManager.shared
+    @EnvironmentObject var vm: BoringViewModel
 
     var body: some View {
-        HStack(spacing: 8) {
-            // Permission indicator (pulsing orange) or activity indicator
-            if manager.state.needsPermission {
-                PermissionNeededIndicator(toolName: manager.state.pendingPermissionTool)
-            } else {
-                ToolActivityIndicator(
-                    isActive: manager.state.hasActiveTools,
-                    toolName: manager.state.currentToolName
-                )
+        HStack(spacing: 0) {
+            // Left side: Empty or could show something later
+            HStack {
+                Spacer()
             }
 
-            // Last message preview
-            if manager.state.needsPermission {
-                Text("Approval needed")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundColor(.orange)
-            } else if !manager.state.lastMessage.isEmpty {
-                Text(manager.state.lastMessage)
-                    .font(.system(size: 11))
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-                    .foregroundColor(.primary.opacity(0.9))
-            } else if manager.state.isConnected {
-                Text("Waiting for activity...")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            } else {
-                Text("Not connected")
-                    .font(.system(size: 11))
-                    .foregroundColor(.secondary)
-            }
+            // Center: Black rectangle to cover the notch area
+            Rectangle()
+                .fill(.black)
+                .frame(width: vm.closedNotchSize.width + 10)
 
-            Spacer()
-
-            // Context usage bar
-            if manager.state.isConnected {
-                VStack(alignment: .trailing, spacing: 2) {
-                    Text("\(Int(manager.state.contextPercentage))%")
-                        .font(.system(size: 9).monospacedDigit())
-                        .foregroundColor(.secondary)
-
-                    ContextBar(
-                        percentage: manager.state.contextPercentage,
-                        width: 50,
-                        height: 4
-                    )
+            // Right side: Session dots
+            HStack {
+                if !manager.availableSessions.isEmpty {
+                    SessionDotsIndicator()
                 }
+                Spacer()
             }
+            .frame(width: 76, alignment: .leading)
         }
-        .padding(.horizontal, 8)
-        .frame(maxWidth: .infinity)
     }
 }
 
@@ -104,9 +74,9 @@ struct ClaudeCodeCompactViewMinimal: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            // Permission indicator or activity dots
-            if manager.state.needsPermission {
-                PermissionNeededIndicatorCompact()
+            // Session dots (compact version)
+            if !manager.availableSessions.isEmpty {
+                SessionDotsIndicatorCompact()
             } else {
                 ToolActivityIndicatorCompact(isActive: manager.state.hasActiveTools)
             }
@@ -175,8 +145,8 @@ struct PermissionNeededIndicatorCompact: View {
             .background(Color.black.opacity(0.8))
             .cornerRadius(8)
 
-        // Preview permission indicator
-        PermissionNeededIndicator(toolName: "Bash")
+        // Preview session dots
+        SessionDotsIndicator()
             .padding()
             .background(Color.black.opacity(0.8))
             .cornerRadius(8)
