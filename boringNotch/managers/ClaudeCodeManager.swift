@@ -473,6 +473,10 @@ final class ClaudeCodeManager: ObservableObject {
         guard !newData.isEmpty,
               let content = String(data: newData, encoding: .utf8) else { return }
 
+        // Any file activity means Claude is working (including compacting/summarizing)
+        // Set isThinking immediately when we detect new data being written
+        sessionStates[sessionId]?.isThinking = true
+
         let lines = content.components(separatedBy: .newlines)
         for line in lines where !line.isEmpty {
             parseJSONLLineForSession(line, sessionId: sessionId)
@@ -742,6 +746,10 @@ final class ClaudeCodeManager: ObservableObject {
         guard !newData.isEmpty,
               let content = String(data: newData, encoding: .utf8) else { return }
 
+        // Any file activity means Claude is working (including compacting/summarizing)
+        // Set isThinking immediately when we detect new data being written
+        state.isThinking = true
+
         let lines = content.components(separatedBy: .newlines)
         print("[ClaudeCode] 📥 Reading \(lines.filter { !$0.isEmpty }.count) new lines from session file")
         for line in lines where !line.isEmpty {
@@ -749,6 +757,9 @@ final class ClaudeCodeManager: ObservableObject {
         }
 
         state.lastUpdateTime = Date()
+
+        // Reset idle timer - we just got activity
+        resetIdleTimer()
     }
 
     // MARK: - JSONL Parsing
