@@ -293,6 +293,7 @@ struct ContentView: View {
                           // Claude Code compact view - show only when sessions have activity (tools running or permission needed)
                           ClaudeCodeCompactView()
                               .frame(height: vm.effectiveClosedNotchHeight)
+                              .transition(.opacity.animation(.easeInOut(duration: 0.3)))
                       } else if !coordinator.expandingView.show && vm.notchState == .closed && (!musicManager.isPlaying && musicManager.isPlayerIdle) && Defaults[.showNotHumanFace] && !vm.hideOnClosed  {
                           BoringFaceAnimation()
                        } else if vm.notchState == .open {
