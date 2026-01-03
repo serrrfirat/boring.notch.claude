@@ -46,9 +46,9 @@ struct SessionDot: View {
     }
 
     var body: some View {
-        Circle()
+        RoundedRectangle(cornerRadius: 1)
             .fill(dotColor)
-            .frame(width: 8, height: 8)
+            .frame(width: 14, height: 3)
             .opacity(shouldBlink ? (isBlinking ? 1.0 : 0.3) : 0.5)
             .animation(.easeInOut(duration: 0.6), value: isBlinking)
             .onAppear {
@@ -132,9 +132,9 @@ struct SessionDotCompact: View {
     }
 
     var body: some View {
-        Circle()
+        RoundedRectangle(cornerRadius: 1)
             .fill(dotColor)
-            .frame(width: 6, height: 6)
+            .frame(width: 14, height: 3)
             .opacity(shouldBlink ? (isBlinking ? 1.0 : 0.3) : 0.5)
             .animation(.easeInOut(duration: 0.6), value: isBlinking)
             .onAppear {

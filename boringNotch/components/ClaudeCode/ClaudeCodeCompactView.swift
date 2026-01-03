@@ -13,26 +13,17 @@ struct ClaudeCodeCompactView: View {
     @EnvironmentObject var vm: BoringViewModel
 
     var body: some View {
-        HStack(spacing: 0) {
-            // Left side: Empty or could show something later
-            HStack {
-                Spacer()
-            }
-
-            // Center: Black rectangle to cover the notch area
-            Rectangle()
-                .fill(.black)
-                .frame(width: vm.closedNotchSize.width + 10)
-
-            // Right side: Session dots
-            HStack {
+        // Black rectangle covering the notch with dots overlaid at the bottom
+        Rectangle()
+            .fill(.black)
+            .frame(width: vm.closedNotchSize.width, height: vm.effectiveClosedNotchHeight)
+            .overlay(alignment: .bottom) {
+                // Session dots at the bottom of the notch area
                 if !manager.availableSessions.isEmpty {
                     SessionDotsIndicator()
+                        .padding(.bottom, 2)
                 }
-                Spacer()
             }
-            .frame(width: 76, alignment: .leading)
-        }
     }
 }
 

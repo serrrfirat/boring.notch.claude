@@ -29,19 +29,39 @@ final class ClaudeCodeManager: ObservableObject {
     /// Sessions currently waiting for user permission approval
     @Published private(set) var sessionsNeedingPermission: [ClaudeSession] = []
 
+    /// Track when we last had activity (for grace period before notch collapses)
+    private var lastActivityTime: Date = Date()
+    /// Grace period to keep notch visible after activity stops (seconds)
+    private let activityGracePeriod: TimeInterval = 2.0
+
     /// True if any session has activity (thinking, active tools, or needs permission)
+    /// Includes a grace period to prevent flickering when switching between tools
     var hasAnySessionActivity: Bool {
         // Check if any session is active (thinking or has active tools) or needs permission
         for sessionState in sessionStates.values {
             if sessionState.isActive || sessionState.needsPermission {
+                lastActivityTime = Date()
                 return true
             }
         }
         // Also check selected session's state
         if state.isActive || state.needsPermission {
+            lastActivityTime = Date()
             return true
         }
-        return !sessionsNeedingPermission.isEmpty
+        if !sessionsNeedingPermission.isEmpty {
+            lastActivityTime = Date()
+            return true
+        }
+
+        // Grace period: keep showing activity for a short time after it stops
+        // This prevents the notch from flickering during tool transitions
+        let timeSinceLastActivity = Date().timeIntervalSince(lastActivityTime)
+        if timeSinceLastActivity < activityGracePeriod {
+            return true
+        }
+
+        return false
     }
 
     // MARK: - Private Properties
@@ -87,6 +107,11 @@ final class ClaudeCodeManager: ObservableObject {
     private var pendingToolChecksBySession: [String: [String: Date]] = [:]
     /// History loading flag per session
     private var isLoadingHistoryBySession: [String: Bool] = [:]
+    /// Timer to detect idle state (no activity for a while = Claude is done)
+    private var idleCheckTimer: Timer?
+    /// Delay before assuming Claude is idle (seconds)
+    /// Set higher to prevent flickering between tool calls
+    private let idleCheckDelay: TimeInterval = 8.0
 
     // MARK: - Initialization
 
@@ -319,6 +344,8 @@ final class ClaudeCodeManager: ObservableObject {
     private func stopWatching() {
         sessionScanTimer?.invalidate()
         sessionScanTimer = nil
+        idleCheckTimer?.invalidate()
+        idleCheckTimer = nil
         stopWatchingSessionFile()
         ideDirWatcher?.cancel()
         ideDirWatcher = nil
@@ -428,8 +455,9 @@ final class ClaudeCodeManager: ObservableObject {
         }
         isLoadingHistoryBySession[sessionId] = false
 
-        // Clear any active tools from history - they're already done
+        // Clear any active state from history - they're already done
         sessionStates[sessionId]?.activeTools.removeAll()
+        sessionStates[sessionId]?.isThinking = false
         pendingToolChecksBySession[sessionId]?.removeAll()
     }
 
@@ -451,6 +479,33 @@ final class ClaudeCodeManager: ObservableObject {
         }
 
         sessionStates[sessionId]?.lastUpdateTime = Date()
+
+        // Reset idle timer - we just got activity
+        resetIdleTimer()
+    }
+
+    /// Reset the idle detection timer
+    private func resetIdleTimer() {
+        idleCheckTimer?.invalidate()
+        idleCheckTimer = Timer.scheduledTimer(withTimeInterval: idleCheckDelay, repeats: false) { [weak self] _ in
+            Task { @MainActor in
+                self?.markAllSessionsIdle()
+            }
+        }
+    }
+
+    /// Mark all sessions as idle (no activity for a while)
+    private func markAllSessionsIdle() {
+        for sessionId in sessionStates.keys {
+            // Only mark idle if not waiting for permission
+            if sessionStates[sessionId]?.needsPermission != true {
+                sessionStates[sessionId]?.isThinking = false
+            }
+        }
+        // Also mark selected session as idle
+        if !state.needsPermission {
+            state.isThinking = false
+        }
     }
 
     /// Parse a JSONL line for a specific session (focused on permission detection)
@@ -474,24 +529,26 @@ final class ClaudeCodeManager: ObservableObject {
         }
 
         // Track thinking state based on message role
+        // Key insight: Claude logs messages AFTER they're complete
+        // - User message logged = Claude is about to think/respond
+        // - Assistant message logged = Claude finished responding (idle timer will mark idle)
+        // - Tool_result = Claude will continue thinking after tool executes
         if let role = message["role"] as? String {
-            if role == "assistant" {
-                // Assistant message started - Claude is thinking/generating
-                sessionStates[sessionId]?.isThinking = true
-
-                // Check if this message has a stop_reason (indicates completion)
-                if message["stop_reason"] != nil {
-                    sessionStates[sessionId]?.isThinking = false
+            if role == "user" {
+                // User message logged - Claude is about to respond
+                // Check if this is a tool_result (continues thinking) or new prompt (starts thinking)
+                var hasToolResult = false
+                if let content = message["content"] as? [[String: Any]] {
+                    hasToolResult = content.contains { ($0["type"] as? String) == "tool_result" }
                 }
-            } else if role == "user" {
-                // User message means Claude finished and is waiting for input
-                sessionStates[sessionId]?.isThinking = false
+                // Either way, Claude is now thinking (responding to user or continuing after tool)
+                sessionStates[sessionId]?.isThinking = true
+            } else if role == "assistant" {
+                // Assistant message logged = Claude finished this response
+                // Keep isThinking true - the idle timer will set it to false after delay
+                // This prevents the dot from flickering between responses
+                sessionStates[sessionId]?.isThinking = true
             }
-        }
-
-        // Also check for stop_reason at top level (message completion indicator)
-        if message["stop_reason"] != nil {
-            sessionStates[sessionId]?.isThinking = false
         }
 
         // Extract message content for tool_use detection
@@ -533,6 +590,10 @@ final class ClaudeCodeManager: ObservableObject {
                     if let index = sessionStates[sessionId]?.activeTools.firstIndex(where: { $0.id == toolUseId }) {
                         sessionStates[sessionId]?.activeTools.remove(at: index)
                     }
+
+                    // IMPORTANT: Set isThinking=true immediately after tool completion
+                    // Claude will always respond after receiving a tool result, so we stay active
+                    sessionStates[sessionId]?.isThinking = true
                 }
             }
         }
@@ -661,8 +722,9 @@ final class ClaudeCodeManager: ObservableObject {
         }
         isLoadingHistory = false
 
-        // Clear any active tools from history - they're already done
+        // Clear any active state from history - they're already done
         state.activeTools.removeAll()
+        state.isThinking = false
         pendingToolChecks.removeAll()
 
         print("[ClaudeCode] After parsing - model: \(state.model), tokens: \(state.tokenUsage.totalTokens), connected: \(state.isConnected)")
@@ -723,6 +785,21 @@ final class ClaudeCodeManager: ObservableObject {
         // Extract model
         if let model = message["model"] as? String {
             state.model = model
+        }
+
+        // Track thinking state based on message role
+        // Key insight: Claude logs messages AFTER they're complete
+        // - User message logged = Claude is about to think/respond
+        // - Assistant message logged = Claude finished responding (idle timer will mark idle)
+        if let role = message["role"] as? String {
+            if role == "user" {
+                // User message logged - Claude is about to respond
+                state.isThinking = true
+            } else if role == "assistant" {
+                // Assistant message logged = Claude finished this response
+                // Keep isThinking true - the idle timer will set it to false after delay
+                state.isThinking = true
+            }
         }
 
         // Extract token usage
@@ -799,6 +876,10 @@ final class ClaudeCodeManager: ObservableObject {
                             state.recentTools.removeLast()
                         }
                     }
+
+                    // IMPORTANT: Set isThinking=true immediately after tool completion
+                    // Claude will always respond after receiving a tool result, so we stay active
+                    state.isThinking = true
                 }
             }
         }
