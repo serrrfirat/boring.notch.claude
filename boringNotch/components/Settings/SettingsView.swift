@@ -1025,7 +1025,16 @@ struct Shelf: View {
 
 struct ClaudeCodeSettings: View {
     @ObservedObject var claudeCodeManager = ClaudeCodeManager.shared
+    @ObservedObject var usageManager = ClaudeUsageManager.shared
     @Default(.enableClaudeCode) var enableClaudeCode
+    @Default(.enableClaudeUsage) var enableUsage
+    @Default(.claudeUsageRefreshMode) var refreshMode
+    @Default(.claudeUsageRefreshInterval) var refreshInterval
+    @Default(.showClaudeUsageInClosedNotch) var showUsageInClosedNotch
+
+    @State private var sessionKeyInput: String = ""
+    @State private var cfClearanceInput: String = ""
+    @State private var showSessionKey: Bool = false
 
     var body: some View {
         Form {
@@ -1094,6 +1103,185 @@ struct ClaudeCodeSettings: View {
                 }
             } header: {
                 Text("Sessions")
+            }
+
+            // MARK: - API Usage Section
+            Section {
+                HStack {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Enable API Usage Tracking")
+                            .font(.headline)
+                        Text("Show your Claude API quota usage in the notch.")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    Spacer(minLength: 40)
+                    Toggle("", isOn: $enableUsage)
+                        .labelsHidden()
+                        .toggleStyle(.switch)
+                        .controlSize(.large)
+                        .onChange(of: enableUsage) { _, newValue in
+                            if newValue && usageManager.isConfigured {
+                                usageManager.startRefreshing()
+                            } else {
+                                usageManager.stopRefreshing()
+                            }
+                        }
+                }
+
+                if enableUsage {
+                    Toggle("Show in closed notch", isOn: $showUsageInClosedNotch)
+                }
+            } header: {
+                Text("API Usage")
+            } footer: {
+                Text("Displays your 5-hour and 7-day Claude usage limits.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if enableUsage {
+                Section {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Session Key")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                        HStack {
+                            if showSessionKey {
+                                TextField("sk-ant-...", text: $sessionKeyInput)
+                                    .textFieldStyle(.roundedBorder)
+                                    .font(.system(.body, design: .monospaced))
+                            } else {
+                                SecureField("sk-ant-...", text: $sessionKeyInput)
+                                    .textFieldStyle(.roundedBorder)
+                            }
+
+                            Button(action: { showSessionKey.toggle() }) {
+                                Image(systemName: showSessionKey ? "eye.slash" : "eye")
+                            }
+                            .buttonStyle(.borderless)
+                        }
+
+                        Text("CF Clearance (for Cloudflare bypass)")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.top, 4)
+                        TextField("cf_clearance cookie value", text: $cfClearanceInput)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(.body, design: .monospaced))
+
+                        HStack {
+                            Button("Save") {
+                                if usageManager.isValidSessionKey(sessionKeyInput) {
+                                    usageManager.sessionKey = sessionKeyInput
+                                    usageManager.cfClearance = cfClearanceInput.isEmpty ? nil : cfClearanceInput
+                                    usageManager.startRefreshing()
+                                }
+                            }
+                            .disabled(!usageManager.isValidSessionKey(sessionKeyInput))
+
+                            if usageManager.isConfigured {
+                                Button("Clear", role: .destructive) {
+                                    usageManager.clearCredentials()
+                                    sessionKeyInput = ""
+                                    cfClearanceInput = ""
+                                }
+                            }
+
+                            Spacer()
+
+                            if usageManager.isConfigured {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .foregroundColor(.green)
+                                Text("Configured")
+                                    .font(.caption)
+                                    .foregroundColor(.green)
+                            }
+                        }
+                    }
+                } header: {
+                    Text("Cookies")
+                } footer: {
+                    Text("Get cookies from claude.ai:\n1. Open DevTools (Cmd+Option+I)\n2. Go to Application → Cookies → claude.ai\n3. Copy 'sessionKey' and 'cf_clearance' values")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                .onAppear {
+                    sessionKeyInput = usageManager.sessionKey ?? ""
+                    cfClearanceInput = usageManager.cfClearance ?? ""
+                }
+
+                Section {
+                    Picker("Refresh Mode", selection: $refreshMode) {
+                        ForEach(UsageRefreshMode.allCases) { mode in
+                            Text(mode.rawValue).tag(mode)
+                        }
+                    }
+
+                    if refreshMode == .fixed {
+                        Picker("Interval", selection: $refreshInterval) {
+                            ForEach(UsageRefreshInterval.allCases) { interval in
+                                Text(interval.displayName).tag(interval)
+                            }
+                        }
+                    } else {
+                        HStack {
+                            Text("Current Mode")
+                            Spacer()
+                            Text(usageManager.currentMonitoringMode.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } header: {
+                    Text("Refresh Settings")
+                }
+
+                if usageManager.isConfigured {
+                    Section {
+                        if let fiveHour = usageManager.usageData.fiveHour {
+                            HStack {
+                                Text("5-Hour Usage")
+                                Spacer()
+                                Text(fiveHour.formattedPercentage)
+                                    .foregroundStyle(fiveHour.percentage > 80 ? .red : fiveHour.percentage > 50 ? .orange : .green)
+                                if fiveHour.resetsAt != nil {
+                                    Text("• Resets in \(fiveHour.formattedRemaining)")
+                                        .foregroundStyle(.secondary)
+                                        .font(.caption)
+                                }
+                            }
+                        }
+
+                        if let sevenDay = usageManager.usageData.sevenDay {
+                            HStack {
+                                Text("7-Day Usage")
+                                Spacer()
+                                Text(sevenDay.formattedPercentage)
+                                    .foregroundStyle(.purple)
+                            }
+                        }
+
+                        if let error = usageManager.lastError {
+                            HStack {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundColor(.orange)
+                                Text(error.localizedDescription)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            }
+                        }
+
+                        Button("Refresh Now") {
+                            Task {
+                                await usageManager.manualRefresh()
+                            }
+                        }
+                        .disabled(usageManager.isLoading)
+                    } header: {
+                        Text("Current Usage")
+                    }
+                }
             }
         }
         .accentColor(.effectiveAccent)

@@ -6,11 +6,15 @@
 //
 
 import SwiftUI
+import Defaults
 
 struct ClaudeCodeStatsView: View {
     @ObservedObject var manager = ClaudeCodeManager.shared
+    @ObservedObject var usageManager = ClaudeUsageManager.shared
+    @Default(.enableClaudeUsage) var enableUsage
 
     var body: some View {
+        ScrollView(.vertical, showsIndicators: false) {
         VStack(alignment: .leading, spacing: 6) {
             // Row 1: Session picker + connection status + model/branch
             HStack(spacing: 6) {
@@ -129,9 +133,11 @@ struct ClaudeCodeStatsView: View {
                 }
                 Spacer()
             }
+
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
+        }  // ScrollView
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
     }
 
@@ -169,10 +175,12 @@ struct ClaudeCodeStatsView: View {
     }
 }
 
-// Context bar with token breakdown
+// Context bar with token breakdown and API usage badges
 struct ContextBarWithBreakdown: View {
     let percentage: Double
     let usage: TokenUsage
+    @ObservedObject var usageManager = ClaudeUsageManager.shared
+    @Default(.enableClaudeUsage) var enableUsage
 
     private var barColor: Color {
         if percentage > 80 { return .red }
@@ -201,13 +209,28 @@ struct ContextBarWithBreakdown: View {
                     .frame(width: 36, alignment: .trailing)
             }
 
-            // Token breakdown row
-            HStack(spacing: 12) {
-                TokenLabel(label: "In", value: usage.inputTokens, color: .blue)
-                TokenLabel(label: "Out", value: usage.outputTokens, color: .purple)
-                TokenLabel(label: "Cache", value: usage.cacheReadInputTokens, color: .cyan)
+            // Token breakdown row with API usage badges
+            HStack(spacing: 8) {
+                // Token labels
+                HStack(spacing: 10) {
+                    TokenLabel(label: "In", value: usage.inputTokens, color: .blue)
+                    TokenLabel(label: "Out", value: usage.outputTokens, color: .purple)
+                    TokenLabel(label: "Cache", value: usage.cacheReadInputTokens, color: .cyan)
+                }
 
                 Spacer()
+
+                // API Usage badges (if enabled and configured)
+                if enableUsage && usageManager.isConfigured {
+                    HStack(spacing: 4) {
+                        if let fiveHour = usageManager.usageData.fiveHour {
+                            UsageBadge(label: "5hr", percentage: fiveHour.percentage)
+                        }
+                        if let sevenDay = usageManager.usageData.sevenDay {
+                            UsageBadge(label: "7d", percentage: sevenDay.percentage)
+                        }
+                    }
+                }
 
                 Text("\(formatTokens(usage.totalTokens)) / 200k")
                     .font(.caption2.monospacedDigit())
@@ -221,6 +244,35 @@ struct ContextBarWithBreakdown: View {
             return "\(tokens / 1000)k"
         }
         return "\(tokens)"
+    }
+}
+
+// Compact usage badge
+struct UsageBadge: View {
+    let label: String
+    let percentage: Double
+
+    private var badgeColor: Color {
+        switch percentage {
+        case 0..<50: return .green
+        case 50..<80: return .orange
+        default: return .red
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 2) {
+            Text(label)
+                .font(.system(size: 8, weight: .medium))
+                .foregroundColor(.secondary)
+            Text("\(Int(percentage.rounded()))%")
+                .font(.system(size: 8, weight: .bold).monospacedDigit())
+                .foregroundColor(badgeColor)
+        }
+        .padding(.horizontal, 4)
+        .padding(.vertical, 2)
+        .background(badgeColor.opacity(0.15))
+        .cornerRadius(3)
     }
 }
 

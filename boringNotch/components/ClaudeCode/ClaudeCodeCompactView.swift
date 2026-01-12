@@ -10,6 +10,7 @@ import SwiftUI
 
 struct ClaudeCodeCompactView: View {
     @ObservedObject var manager = ClaudeCodeManager.shared
+    @ObservedObject var usageManager = ClaudeUsageManager.shared
     @EnvironmentObject var vm: BoringViewModel
 
     var body: some View {
@@ -18,11 +19,16 @@ struct ClaudeCodeCompactView: View {
             .fill(.black)
             .frame(width: vm.closedNotchSize.width, height: vm.effectiveClosedNotchHeight)
             .overlay(alignment: .bottom) {
-                // Session dots at the bottom of the notch area
-                if !manager.availableSessions.isEmpty {
-                    SessionDotsIndicator()
-                        .padding(.bottom, 2)
+                HStack(spacing: 8) {
+                    // Session dots at the bottom of the notch area
+                    if !manager.availableSessions.isEmpty {
+                        SessionDotsIndicator()
+                    }
+
+                    // Usage indicator (if configured)
+                    ClaudeUsageCompactIndicator()
                 }
+                .padding(.bottom, 2)
             }
     }
 }
